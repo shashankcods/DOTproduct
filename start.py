@@ -68,3 +68,55 @@ class PositionEncoding(nn.module):
     
     def forward(self, word_embeddings):
         return word_embeddings + self.pe[:word_embeddings.size(0), :]
+
+class Attention(nn.Module):
+
+    def __init__(self, d_model = 2):
+        super().__init__()
+
+        self.d_model = d_model
+
+        self.W_q = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
+        self.W_k = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
+        self.W_v = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
+        
+        self.row_dim = 0
+        self.col_dim = 1
+
+    def forward(self, encodings_for_q, encodings_for_k, encodings_for_v, mask = None):
+        q = self.W_q(encodings_for_q)
+        k = self.W_k(encodings_for_k)
+        v = self.W_v(encodings_for_v)
+
+        sims = torch.matmul(q, k.transpose(dim0 = self.row_dim, dim1 = self.col_dim))
+        scaled_sims = sims / torch.tensor(k.size(self.col_dim)**0.5)
+
+        if mask is not None:
+            scaled_sims = scaled_sims.masked_fill(mask = mask, value = -1e9) # to mask all values that come after current token
+
+        attention_percents = F.softmax(scaled_sims, dim = self.col_dim)
+        attention_scores = torch.matmul(attention_percents, v)
+
+        return attention_scores
+
+class DecoderOnlyTranformer(L.LightningModule):
+    
+    def __init__(self, num_tokens = 4, d_model = 2, max_len = 6):
+        super().__init__()
+
+        L.seed_everything(seed = 42)
+
+        self.we = nn.Embedding(num_embeddings = num_tokens, embedding_dim = d_model)
+        self.pe = PositionEncoding(d_model = d_model, max_len = max_len)
+
+        self.self_attention = Attention(d_model = d_model)
+
+        self.fc_layer = nn.Linear(in_features = d_model, out_features = num_tokens)
+        self.loss = nn.CrossEntropyLoss()
+
+    def forward(self, token_ids):
+
+        word_embeddings = self.we(token_ids)
+        position_encoded = self.pe(word_embeddings)
+        
+         
