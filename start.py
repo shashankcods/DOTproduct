@@ -43,7 +43,7 @@ labels = torch.tensor([[token_to_id["is"],
 dataset = TensorDataset(inputs, labels) 
 dataloader = DataLoader(dataset)
 
-class PositionEncoding(nn.module):
+class PositionEncoding(nn.Module):
 
     def __init__(self, d_model = 2, max_len = 6):
         # d_model = dimension of transformer, number of embeddings per token
@@ -51,7 +51,7 @@ class PositionEncoding(nn.module):
 
         super().__init__()
 
-        pe = torch.zeroes(max_len, d_model) # creates a matrix of zeroes
+        pe = torch.zeros(max_len, d_model) # creates a matrix of zeroes
         position = torch.arange(start = 0, end = max_len, step = 1).float().unsqueeze(1) # unsqueeze list into matrix
 
         embedding_index = torch.arange(start = 0, end = d_model, step = 2).float() # embedding index used is 2i anyway
@@ -119,4 +119,50 @@ class DecoderOnlyTranformer(L.LightningModule):
         word_embeddings = self.we(token_ids)
         position_encoded = self.pe(word_embeddings)
         
-         
+        mask = torch.tril(torch.ones((token_ids.size(dim = 0), token_ids.size(dim = 0)), device = self.device))
+        mask = mask == 0 # converting mask into bool values from 0/1
+
+        self_attention_values = self.self_attention(position_encoded, position_encoded, position_encoded, mask = mask)
+
+        residual_connection_values = position_encoded + self_attention_values
+
+        fc_layer_output = self.fc_layer(residual_connection_values)
+
+        return fc_layer_output
+    
+    def configure_optimizers(self):
+        return Adam(self.paramters(), lr = 0.1)
+    
+    def training_step(self, batch, batch_idx):
+        input_tokens, labels = batch
+        output = self.forward(input_tokens[0])
+        loss = self.loss(output, labels[0])
+
+        return loss
+
+model = DecoderOnlyTranformer(num_tokens=len(token_to_id), d_model=2, max_len=6)
+
+model_input = torch.tensor([token_to_id["what"], 
+                            token_to_id["is"], 
+                            token_to_id["statquest"], 
+                            token_to_id["<EOS>"]])
+input_length = model_input.size(dim=0)
+
+predictions = model(model_input) 
+predicted_id = torch.tensor([torch.argmax(predictions[-1,:])])
+predicted_ids = predicted_id
+
+max_length = 6
+for i in range(input_length, max_length):
+    if (predicted_id == token_to_id["<EOS>"]):
+        break
+
+    model_input = torch.cat((model_input, predicted_id))
+
+    predictions = model(model_input)
+    predcited_id = torch.tensor([torch.argmax(predictions[-1:])])
+    predicted_ids = torch.cat((predicted_ids, predicted_id))
+
+print("Predicted Tokens:\n")
+for id in predicted_ids:
+    print("\t", id_to_token[id.item()])
