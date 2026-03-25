@@ -131,7 +131,7 @@ class DecoderOnlyTranformer(L.LightningModule):
         return fc_layer_output
     
     def configure_optimizers(self):
-        return Adam(self.paramters(), lr = 0.1)
+        return Adam(self.parameters(), lr = 0.1)
     
     def training_step(self, batch, batch_idx):
         input_tokens, labels = batch
@@ -141,6 +141,9 @@ class DecoderOnlyTranformer(L.LightningModule):
         return loss
 
 model = DecoderOnlyTranformer(num_tokens=len(token_to_id), d_model=2, max_len=6)
+
+trainer = L.Trainer(max_epochs=30)
+trainer.fit(model, train_dataloaders=dataloader)
 
 model_input = torch.tensor([token_to_id["what"], 
                             token_to_id["is"], 
@@ -160,7 +163,7 @@ for i in range(input_length, max_length):
     model_input = torch.cat((model_input, predicted_id))
 
     predictions = model(model_input)
-    predcited_id = torch.tensor([torch.argmax(predictions[-1:])])
+    predicted_id = torch.tensor([torch.argmax(predictions[-1,:])])
     predicted_ids = torch.cat((predicted_ids, predicted_id))
 
 print("Predicted Tokens:\n")
