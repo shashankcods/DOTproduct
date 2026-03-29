@@ -6,6 +6,12 @@ from torch.utils.data import TensorDataset, DataLoader
 
 import lightning as L 
 
+print("CUDA available: " + str(torch.cuda.is_available()))
+print(torch.cuda.get_device_name(0))
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", str(device).upper())
+
 with open("datasets/tiny_shakespeare.txt", "r", encoding="utf-8") as f:
     text = f.read()
 
@@ -182,7 +188,7 @@ def generate(model, prompt, max_new_tokens=200):
 
     model.eval()
 
-    model_input = torch.tensor([token_to_id[c] for c in prompt]).unsqueeze(0)
+    model_input = torch.tensor([token_to_id[c] for c in prompt]).unsqueeze(0).to(device)
 
     generated = []
 
@@ -206,7 +212,7 @@ def generate(model, prompt, max_new_tokens=200):
 
 if __name__ == "__main__":
 
-    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size)
+    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size).to(device) # now runs on GPU
 
     optimizer = Adam(model.parameters(), lr=3e-4)
 
@@ -215,6 +221,9 @@ if __name__ == "__main__":
     for step in range(max_steps):
 
         x, y = get_batch()
+
+        x = x.to(device) # training data also in GPU
+        y = y.to(device)
 
         logits = model(x)
 
