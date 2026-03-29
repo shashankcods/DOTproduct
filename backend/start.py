@@ -22,16 +22,16 @@ batch_size = 32
 
 def get_batch():
     
-    ix = torch.randint(len(data) - block_size, (batch_size,))
+    ix = torch.randint(len(data) - block_size, (batch_size,)) # batch_size is the num of sequences being provided per get_batch
     
-    x = torch.stack([data[i:i+block_size] for i in ix])
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    x = torch.stack([data[i:i+block_size] for i in ix])     # creating a stack of "batch_size" sequences to send as X
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix]) # shifting the above one pos ahead to send as Y
     
     return x, y
 
 class PositionEncoding(nn.Module):
 
-    def __init__(self, d_model = 2, max_len = 6):
+    def __init__(self, d_model, max_len):
         # d_model = dimension of transformer, number of embeddings per token
         # max_len = max length of phrases
 
@@ -58,7 +58,7 @@ class PositionEncoding(nn.Module):
 
 class Attention(nn.Module):
 
-    def __init__(self, d_model = 2):
+    def __init__(self, d_model):
         super().__init__()
 
         self.d_model = d_model
@@ -88,7 +88,7 @@ class Attention(nn.Module):
 
 class DecoderOnlyTranformer(L.LightningModule):
     
-    def __init__(self, num_tokens = 4, d_model = 2, max_len = 6):
+    def __init__(self, num_tokens, d_model, max_len):
         super().__init__()
 
         L.seed_everything(seed = 42)
@@ -147,7 +147,7 @@ def generate(model, prompt, max_new_tokens=200):
 
 if __name__ == "__main__":
 
-    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=32, max_len=block_size)
+    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size)
 
     optimizer = Adam(model.parameters(), lr=3e-4)
 
@@ -160,7 +160,7 @@ if __name__ == "__main__":
         logits = model(x)
 
         loss = model.loss(
-            logits.view(-1, logits.size(-1)),
+            logits.view(-1, logits.size(-1)),  # (32, 32, 65) becomes (1024, 65)
             y.view(-1)
         )
 
