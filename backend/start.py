@@ -16,7 +16,7 @@ token_to_id = {ch:i for i,ch in enumerate(chars)}
 id_to_token = {i:ch for i,ch in enumerate(chars)}
 
 data = torch.tensor([token_to_id[c] for c in text], dtype=torch.long)
-block_size = 32                                                              # can be increased later
+block_size = 128                                                           
 
 batch_size = 32
 
@@ -56,35 +56,89 @@ class PositionEncoding(nn.Module):
         seq_len = word_embeddings.size(1)
         return word_embeddings + self.pe[:seq_len, :].unsqueeze(0)
 
-class Attention(nn.Module):
+class MultiHeadAttention(nn.Module):
 
-    def __init__(self, d_model):
+    def __init__(self, d_model, num_heads=8):
         super().__init__()
 
         self.d_model = d_model
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
 
-        self.W_q = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
-        self.W_k = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
-        self.W_v = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
-        
+        assert self.head_dim * num_heads == d_model
 
-    def forward(self, encodings_for_q, encodings_for_k, encodings_for_v, mask = None):
-        q = self.W_q(encodings_for_q)
-        k = self.W_k(encodings_for_k)
-        v = self.W_v(encodings_for_v)
+        self.W_q = nn.Linear(d_model, d_model, bias=False)
+        self.W_k = nn.Linear(d_model, d_model, bias=False)
+        self.W_v = nn.Linear(d_model, d_model, bias=False)
 
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def forward(self, x, mask=None):
+
+        B, T, C = x.shape
+
+        q = self.W_q(x)
+        k = self.W_k(x)
+        v = self.W_v(x)
+
+        # split heads
+        q = q.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # attention scores
         sims = torch.matmul(q, k.transpose(-2, -1))
-
-        scaled_sims = sims / (k.size(-1) ** 0.5)
+        sims = sims / (self.head_dim ** 0.5)
 
         if mask is not None:
-            scaled_sims = scaled_sims.masked_fill(mask, -1e9)
+            sims = sims.masked_fill(mask, -1e9)
 
-        attention_percents = F.softmax(scaled_sims, dim=-1)
+        weights = F.softmax(sims, dim=-1)
 
-        attention_scores = torch.matmul(attention_percents, v)
+        out = torch.matmul(weights, v)
 
-        return attention_scores
+        # combine heads
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+
+        out = self.W_o(out)
+
+        return out
+
+class FeedForward(nn.Module):
+    def __init__(self, d_model):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class TransformerBlock(nn.Module):
+
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+
+        self.ln1 = nn.LayerNorm(d_model)
+        self.attn = MultiHeadAttention(d_model, num_heads)
+
+        self.ln2 = nn.LayerNorm(d_model)
+        self.ff = FeedForward(d_model)
+
+    def forward(self, x, mask):
+
+        norm_x = self.ln1(x)
+        attn = self.attn(norm_x, mask=mask)
+        x = x + attn
+
+        norm_x = self.ln2(x)
+        ff = self.ff(norm_x)
+        x = x + ff
+
+        return x
 
 class DecoderOnlyTranformer(L.LightningModule):
     
@@ -96,7 +150,11 @@ class DecoderOnlyTranformer(L.LightningModule):
         self.we = nn.Embedding(num_embeddings = num_tokens, embedding_dim = d_model)
         self.pe = PositionEncoding(d_model = d_model, max_len = max_len)
 
-        self.self_attention = Attention(d_model = d_model)
+        num_layers = 4
+
+        self.blocks = nn.ModuleList(
+            [TransformerBlock(d_model, num_heads=8) for _ in range(num_layers)]
+        )
 
         self.fc_layer = nn.Linear(in_features = d_model, out_features = num_tokens)
         self.loss = nn.CrossEntropyLoss()
@@ -108,14 +166,15 @@ class DecoderOnlyTranformer(L.LightningModule):
         
         T = token_ids.size(1)
         mask = torch.tril(torch.ones((T, T), device=self.device))
-        mask = mask == 0 # converting mask into bool values from 0/1
-        mask = mask.unsqueeze(0) # to add an extra dimension for batching
+        mask = mask == 0
+        mask = mask.unsqueeze(0).unsqueeze(0)
 
-        self_attention_values = self.self_attention(position_encoded, position_encoded, position_encoded, mask = mask)
+        x = position_encoded
 
-        residual_connection_values = position_encoded + self_attention_values
+        for block in self.blocks:
+            x = block(x, mask)
 
-        fc_layer_output = self.fc_layer(residual_connection_values)
+        fc_layer_output = self.fc_layer(x)
 
         return fc_layer_output
     
