@@ -117,6 +117,7 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(d_model, 4 * d_model),
             nn.GELU(),
+            nn.Dropout(0.1),
             nn.Linear(4 * d_model, d_model)
         )
 
@@ -130,19 +131,21 @@ class TransformerBlock(nn.Module):
 
         self.ln1 = nn.LayerNorm(d_model)
         self.attn = MultiHeadAttention(d_model, num_heads)
+        self.dropout1 = nn.Dropout(0.1)
 
         self.ln2 = nn.LayerNorm(d_model)
         self.ff = FeedForward(d_model)
+        self.dropout2 = nn.Dropout(0.1)
 
     def forward(self, x, mask):
 
         norm_x = self.ln1(x)
         attn = self.attn(norm_x, mask=mask)
-        x = x + attn
+        x = x + self.dropout1(attn)
 
         norm_x = self.ln2(x)
         ff = self.ff(norm_x)
-        x = x + ff
+        x = x + self.dropout2(ff)
 
         return x
 
