@@ -4,6 +4,8 @@ import torch.nn.functional as F # for softmax() and argmax()
 from torch.optim import AdamW 
 from torch.utils.data import TensorDataset, DataLoader 
 
+from tokenizers import ByteLevelBPETokenizer
+
 import lightning as L 
 
 print("CUDA available: " + str(torch.cuda.is_available()))
@@ -15,15 +17,25 @@ print("Using device:", str(device).upper())
 with open("datasets/tiny_shakespeare.txt", "r", encoding="utf-8") as f:
     text = f.read()
 
-chars = sorted(list(set(text)))
-vocab_size = len(chars)
+# chars = sorted(list(set(text)))
+# vocab_size = len(chars)
 
-token_to_id = {ch:i for i,ch in enumerate(chars)}
-id_to_token = {i:ch for i,ch in enumerate(chars)}
+# token_to_id = {ch:i for i,ch in enumerate(chars)}
+# id_to_token = {i:ch for i,ch in enumerate(chars)}
 
-data = torch.tensor([token_to_id[c] for c in text], dtype=torch.long)
+# data = torch.tensor([token_to_id[c] for c in text], dtype=torch.long) 
+
+tokenizer = ByteLevelBPETokenizer(
+    "tokenizer/vocab.json",
+    "tokenizer/merges.txt"
+)
+
+vocab_size = tokenizer.get_vocab_size()
+
+encoded = tokenizer.encode(text)
+data = torch.tensor(encoded.ids, dtype=torch.long)
+
 block_size = 128                                                           
-
 batch_size = 32
 
 def get_batch():
@@ -191,7 +203,7 @@ def generate(model, prompt, max_new_tokens=200):
 
     model.eval()
 
-    model_input = torch.tensor([token_to_id[c] for c in prompt]).unsqueeze(0).to(device)
+    model_input = torch.tensor(tokenizer.encode(prompt).ids).unsqueeze(0).to(device)
 
     generated = []
 
@@ -209,9 +221,10 @@ def generate(model, prompt, max_new_tokens=200):
             dim=1
         )
 
-        generated.append(id_to_token[next_id.item()])
+        generated.append(next_id.item())
 
-    return prompt + "".join(generated)
+    decoded = tokenizer.decode(generated)
+    return prompt + decoded
 
 if __name__ == "__main__":
 
@@ -223,7 +236,7 @@ if __name__ == "__main__":
         weight_decay=0.01
     )
 
-    max_steps = 30000
+    max_steps = 10000
 
     for step in range(max_steps):
 
