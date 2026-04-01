@@ -4,3 +4,41 @@ venv/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+
+# datasets
+backend/data/datasets/
+backend/data/*.txt
+
+# tokenizer artifacts
+backend/tokenizer/
+
+# python env
+DOTvenv/
+
+# python cache
+__pycache__/
+*.pyc
+
+# model checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# hf cache
+.cache/
+
+# datasets
+backend/data/datasets/
+backend/datasets/
+*.txt
+
+# tokenizer artifacts
+backend/tokenizer/*.json
+backend/tokenizer/*.txt
+
+# virtual env
+DOTvenv/
+
+# python cache
+__pycache__/
+*.pyc
