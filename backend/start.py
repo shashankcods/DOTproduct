@@ -1,7 +1,7 @@
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F # for softmax() and argmax()
-from torch.optim import Adam 
+from torch.optim import AdamW 
 from torch.utils.data import TensorDataset, DataLoader 
 
 import lightning as L 
@@ -159,7 +159,7 @@ class DecoderOnlyTranformer(L.LightningModule):
         self.we = nn.Embedding(num_embeddings = num_tokens, embedding_dim = d_model)
         self.pe = PositionEncoding(d_model = d_model, max_len = max_len)
 
-        num_layers = 4
+        num_layers = 6
 
         self.blocks = nn.ModuleList(
             [TransformerBlock(d_model, num_heads=8) for _ in range(num_layers)]
@@ -217,9 +217,13 @@ if __name__ == "__main__":
 
     model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size).to(device) # now runs on GPU
 
-    optimizer = Adam(model.parameters(), lr=3e-4)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=3e-4,
+        weight_decay=0.01
+    )
 
-    max_steps = 10000
+    max_steps = 30000
 
     for step in range(max_steps):
 
