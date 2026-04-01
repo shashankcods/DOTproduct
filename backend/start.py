@@ -1,51 +1,43 @@
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F # for softmax() and argmax()
-from torch.optim import Adam 
+from torch.optim import AdamW 
 from torch.utils.data import TensorDataset, DataLoader 
 
 import lightning as L 
 
-token_to_id = {
-               'what' : 0,
-               'is' : 1,
-               'statquest' : 2,
-               'awesome' : 3,
-               '<EOS>' : 4,
-               }
+print("CUDA available: " + str(torch.cuda.is_available()))
+print(torch.cuda.get_device_name(0))
 
-id_to_token = dict(map(reversed, token_to_id.items()))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", str(device).upper())
 
-inputs = torch.tensor([[token_to_id["what"], ## input #1: what is statquest <EOS> awesome
-                        token_to_id["is"], 
-                        token_to_id["statquest"], 
-                        token_to_id["<EOS>"],
-                        token_to_id["awesome"]], 
-                       
-                       [token_to_id["statquest"], # input #2: statquest is what <EOS> awesome
-                        token_to_id["is"], 
-                        token_to_id["what"], 
-                        token_to_id["<EOS>"], 
-                        token_to_id["awesome"]]])
+with open("datasets/tiny_shakespeare.txt", "r", encoding="utf-8") as f:
+    text = f.read()
 
-labels = torch.tensor([[token_to_id["is"], 
-                        token_to_id["statquest"], 
-                        token_to_id["<EOS>"], 
-                        token_to_id["awesome"], 
-                        token_to_id["<EOS>"]],  
-                       
-                       [token_to_id["is"], 
-                        token_to_id["what"], 
-                        token_to_id["<EOS>"], 
-                        token_to_id["awesome"], 
-                        token_to_id["<EOS>"]]])
+chars = sorted(list(set(text)))
+vocab_size = len(chars)
 
-dataset = TensorDataset(inputs, labels) 
-dataloader = DataLoader(dataset)
+token_to_id = {ch:i for i,ch in enumerate(chars)}
+id_to_token = {i:ch for i,ch in enumerate(chars)}
+
+data = torch.tensor([token_to_id[c] for c in text], dtype=torch.long)
+block_size = 128                                                           
+
+batch_size = 32
+
+def get_batch():
+    
+    ix = torch.randint(len(data) - block_size, (batch_size,)) # batch_size is the num of sequences being provided per get_batch
+    
+    x = torch.stack([data[i:i+block_size] for i in ix])     # creating a stack of "batch_size" sequences to send as X
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix]) # shifting the above one pos ahead to send as Y
+    
+    return x, y
 
 class PositionEncoding(nn.Module):
 
-    def __init__(self, d_model = 2, max_len = 6):
+    def __init__(self, d_model, max_len):
         # d_model = dimension of transformer, number of embeddings per token
         # max_len = max length of phrases
 
@@ -67,41 +59,99 @@ class PositionEncoding(nn.Module):
         self.register_buffer('pe', pe) # so that not treated as a parameter and moves with the model
     
     def forward(self, word_embeddings):
-        return word_embeddings + self.pe[:word_embeddings.size(0), :]
+        seq_len = word_embeddings.size(1)
+        return word_embeddings + self.pe[:seq_len, :].unsqueeze(0)
 
-class Attention(nn.Module):
+class MultiHeadAttention(nn.Module):
 
-    def __init__(self, d_model = 2):
+    def __init__(self, d_model, num_heads=8):
         super().__init__()
 
         self.d_model = d_model
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
 
-        self.W_q = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
-        self.W_k = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
-        self.W_v = nn.Linear(in_features = d_model, out_features = d_model, bias = False)
-        
-        self.row_dim = 0
-        self.col_dim = 1
+        assert self.head_dim * num_heads == d_model
 
-    def forward(self, encodings_for_q, encodings_for_k, encodings_for_v, mask = None):
-        q = self.W_q(encodings_for_q)
-        k = self.W_k(encodings_for_k)
-        v = self.W_v(encodings_for_v)
+        self.W_q = nn.Linear(d_model, d_model, bias=False)
+        self.W_k = nn.Linear(d_model, d_model, bias=False)
+        self.W_v = nn.Linear(d_model, d_model, bias=False)
 
-        sims = torch.matmul(q, k.transpose(dim0 = self.row_dim, dim1 = self.col_dim))
-        scaled_sims = sims / torch.tensor(k.size(self.col_dim)**0.5)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def forward(self, x, mask=None):
+
+        B, T, C = x.shape
+
+        q = self.W_q(x)
+        k = self.W_k(x)
+        v = self.W_v(x)
+
+        # split heads
+        q = q.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # attention scores
+        sims = torch.matmul(q, k.transpose(-2, -1))
+        sims = sims / (self.head_dim ** 0.5)
 
         if mask is not None:
-            scaled_sims = scaled_sims.masked_fill(mask = mask, value = -1e9) # to mask all values that come after current token
+            sims = sims.masked_fill(mask, -1e9)
 
-        attention_percents = F.softmax(scaled_sims, dim = self.col_dim)
-        attention_scores = torch.matmul(attention_percents, v)
+        weights = F.softmax(sims, dim=-1)
 
-        return attention_scores
+        out = torch.matmul(weights, v)
+
+        # combine heads
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+
+        out = self.W_o(out)
+
+        return out
+
+class FeedForward(nn.Module):
+    def __init__(self, d_model):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(4 * d_model, d_model)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class TransformerBlock(nn.Module):
+
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+
+        self.ln1 = nn.LayerNorm(d_model)
+        self.attn = MultiHeadAttention(d_model, num_heads)
+        self.dropout1 = nn.Dropout(0.1)
+
+        self.ln2 = nn.LayerNorm(d_model)
+        self.ff = FeedForward(d_model)
+        self.dropout2 = nn.Dropout(0.1)
+
+    def forward(self, x, mask):
+
+        norm_x = self.ln1(x)
+        attn = self.attn(norm_x, mask=mask)
+        x = x + self.dropout1(attn)
+
+        norm_x = self.ln2(x)
+        ff = self.ff(norm_x)
+        x = x + self.dropout2(ff)
+
+        return x
 
 class DecoderOnlyTranformer(L.LightningModule):
     
-    def __init__(self, num_tokens = 4, d_model = 2, max_len = 6):
+    def __init__(self, num_tokens, d_model, max_len):
         super().__init__()
 
         L.seed_everything(seed = 42)
@@ -109,7 +159,11 @@ class DecoderOnlyTranformer(L.LightningModule):
         self.we = nn.Embedding(num_embeddings = num_tokens, embedding_dim = d_model)
         self.pe = PositionEncoding(d_model = d_model, max_len = max_len)
 
-        self.self_attention = Attention(d_model = d_model)
+        num_layers = 6
+
+        self.blocks = nn.ModuleList(
+            [TransformerBlock(d_model, num_heads=8) for _ in range(num_layers)]
+        )
 
         self.fc_layer = nn.Linear(in_features = d_model, out_features = num_tokens)
         self.loss = nn.CrossEntropyLoss()
@@ -119,50 +173,80 @@ class DecoderOnlyTranformer(L.LightningModule):
         word_embeddings = self.we(token_ids)
         position_encoded = self.pe(word_embeddings)
         
-        mask = torch.tril(torch.ones((token_ids.size(dim = 0), token_ids.size(dim = 0)), device = self.device))
-        mask = mask == 0 # converting mask into bool values from 0/1
+        T = token_ids.size(1)
+        mask = torch.tril(torch.ones((T, T), device=self.device))
+        mask = mask == 0
+        mask = mask.unsqueeze(0).unsqueeze(0)
 
-        self_attention_values = self.self_attention(position_encoded, position_encoded, position_encoded, mask = mask)
+        x = position_encoded
 
-        residual_connection_values = position_encoded + self_attention_values
+        for block in self.blocks:
+            x = block(x, mask)
 
-        fc_layer_output = self.fc_layer(residual_connection_values)
+        fc_layer_output = self.fc_layer(x)
 
         return fc_layer_output
     
-    def configure_optimizers(self):
-        return Adam(self.paramters(), lr = 0.1)
-    
-    def training_step(self, batch, batch_idx):
-        input_tokens, labels = batch
-        output = self.forward(input_tokens[0])
-        loss = self.loss(output, labels[0])
+def generate(model, prompt, max_new_tokens=200):
 
-        return loss
+    model.eval()
 
-model = DecoderOnlyTranformer(num_tokens=len(token_to_id), d_model=2, max_len=6)
+    model_input = torch.tensor([token_to_id[c] for c in prompt]).unsqueeze(0).to(device)
 
-model_input = torch.tensor([token_to_id["what"], 
-                            token_to_id["is"], 
-                            token_to_id["statquest"], 
-                            token_to_id["<EOS>"]])
-input_length = model_input.size(dim=0)
+    generated = []
 
-predictions = model(model_input) 
-predicted_id = torch.tensor([torch.argmax(predictions[-1,:])])
-predicted_ids = predicted_id
+    for _ in range(max_new_tokens):
 
-max_length = 6
-for i in range(input_length, max_length):
-    if (predicted_id == token_to_id["<EOS>"]):
-        break
+        model_input = model_input[:, -block_size:]
 
-    model_input = torch.cat((model_input, predicted_id))
+        predictions = model(model_input)
 
-    predictions = model(model_input)
-    predcited_id = torch.tensor([torch.argmax(predictions[-1:])])
-    predicted_ids = torch.cat((predicted_ids, predicted_id))
+        probs = F.softmax(predictions[0, -1], dim=-1)
+        next_id = torch.multinomial(probs, num_samples=1)
 
-print("Predicted Tokens:\n")
-for id in predicted_ids:
-    print("\t", id_to_token[id.item()])
+        model_input = torch.cat(
+            (model_input, next_id.unsqueeze(0)),
+            dim=1
+        )
+
+        generated.append(id_to_token[next_id.item()])
+
+    return prompt + "".join(generated)
+
+if __name__ == "__main__":
+
+    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size).to(device) # now runs on GPU
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=3e-4,
+        weight_decay=0.01
+    )
+
+    max_steps = 30000
+
+    for step in range(max_steps):
+
+        x, y = get_batch()
+
+        x = x.to(device) # training data also in GPU
+        y = y.to(device)
+
+        logits = model(x)
+
+        loss = model.loss(
+            logits.view(-1, logits.size(-1)),  # (32, 32, 65) becomes (1024, 65)
+            y.view(-1)
+        )
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if step % 200 == 0:
+            print("step:", step, "loss:", loss.item())
+
+    prompt = "ROMEO:"
+    output = generate(model, prompt)
+
+    print(output)
