@@ -14,7 +14,7 @@ print(torch.cuda.get_device_name(0))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", str(device).upper())
 
-with open("datasets/tiny_shakespeare.txt", "r", encoding="utf-8") as f:
+with open("data/datasets/conversations.txt", "r", encoding="utf-8") as f:
     text = f.read()
 
 # chars = sorted(list(set(text)))
@@ -207,28 +207,36 @@ def generate(model, prompt, max_new_tokens=200):
 
     generated = []
 
-    for _ in range(max_new_tokens):
+    with torch.no_grad():
+        for _ in range(max_new_tokens):
 
-        model_input = model_input[:, -block_size:]
+            model_input = model_input[:, -block_size:]
 
-        predictions = model(model_input)
+            predictions = model(model_input)
 
-        probs = F.softmax(predictions[0, -1], dim=-1)
-        next_id = torch.multinomial(probs, num_samples=1)
+            probs = F.softmax(predictions[0, -1], dim=-1)
+            next_id = torch.multinomial(probs, num_samples=1)
 
-        model_input = torch.cat(
-            (model_input, next_id.unsqueeze(0)),
-            dim=1
-        )
+            model_input = torch.cat(
+                (model_input, next_id.unsqueeze(0)),
+                dim=1
+            )
 
-        generated.append(next_id.item())
+            generated.append(next_id.item())
 
     decoded = tokenizer.decode(generated)
-    return prompt + decoded
+    return decoded
 
 if __name__ == "__main__":
 
     model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size).to(device) # now runs on GPU
+
+    import os
+
+    if os.path.exists("model_weights.pth"):
+        model.load_state_dict(torch.load("model_weights.pth", map_location=device))
+        model.eval()
+        print("Loaded saved model.")
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -238,28 +246,39 @@ if __name__ == "__main__":
 
     max_steps = 10000
 
-    for step in range(max_steps):
+    if not os.path.exists("model_weights.pth"):
 
-        x, y = get_batch()
+        for step in range(max_steps):
 
-        x = x.to(device) # training data also in GPU
-        y = y.to(device)
+            x, y = get_batch()
 
-        logits = model(x)
+            x = x.to(device)
+            y = y.to(device)
 
-        loss = model.loss(
-            logits.view(-1, logits.size(-1)),  # (32, 32, 65) becomes (1024, 65)
-            y.view(-1)
-        )
+            logits = model(x)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            loss = model.loss(
+                logits.view(-1, logits.size(-1)),
+                y.view(-1)
+            )
 
-        if step % 200 == 0:
-            print("step:", step, "loss:", loss.item())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-    prompt = "ROMEO:"
-    output = generate(model, prompt)
+            if step % 200 == 0:
+                print("step:", step, "loss:", loss.item())
 
-    print(output)
+        torch.save(model.state_dict(), "model_weights.pth")
+        print("Model saved.")
+
+    while True:
+
+        prompt = input("\nYou: ")
+
+        if prompt.lower() in ["exit", "quit"]:
+            break
+
+        output = generate(model, prompt)
+
+        print("Model:", output)
