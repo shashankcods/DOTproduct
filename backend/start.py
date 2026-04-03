@@ -226,7 +226,8 @@ def generate(model, prompt, max_new_tokens=200):
 
             predictions = model(model_input)
 
-            probs = F.softmax(predictions[0, -1], dim=-1)
+            temperature = 0.8
+            probs = F.softmax(predictions[0, -1] / temperature, dim=-1)
             next_id = torch.multinomial(probs, num_samples=1)
 
             model_input = torch.cat(
