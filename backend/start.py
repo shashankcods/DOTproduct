@@ -14,9 +14,6 @@ print(torch.cuda.get_device_name(0))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", str(device).upper())
 
-with open("data/datasets/conversations.txt", "r", encoding="utf-8") as f:
-    text = f.read()
-
 # chars = sorted(list(set(text)))
 # vocab_size = len(chars)
 
@@ -25,6 +22,8 @@ with open("data/datasets/conversations.txt", "r", encoding="utf-8") as f:
 
 # data = torch.tensor([token_to_id[c] for c in text], dtype=torch.long) 
 
+import numpy as np
+
 tokenizer = ByteLevelBPETokenizer(
     "tokenizer/vocab.json",
     "tokenizer/merges.txt"
@@ -32,19 +31,29 @@ tokenizer = ByteLevelBPETokenizer(
 
 vocab_size = tokenizer.get_vocab_size()
 
-encoded = tokenizer.encode(text)
-data = torch.tensor(encoded.ids, dtype=torch.long)
+data = np.memmap(
+    "data/tokens.bin",
+    dtype=np.uint16,
+    mode="r"
+)
 
 block_size = 128                                                           
 batch_size = 32
 
 def get_batch():
-    
-    ix = torch.randint(len(data) - block_size, (batch_size,)) # batch_size is the num of sequences being provided per get_batch
-    
-    x = torch.stack([data[i:i+block_size] for i in ix])     # creating a stack of "batch_size" sequences to send as X
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix]) # shifting the above one pos ahead to send as Y
-    
+
+    ix = torch.randint(len(data) - block_size - 1, (batch_size,))
+
+    x = torch.stack([
+        torch.from_numpy(data[i:i+block_size].astype(np.int64))
+        for i in ix
+    ])
+
+    y = torch.stack([
+        torch.from_numpy(data[i+1:i+block_size+1].astype(np.int64))
+        for i in ix
+    ])
+
     return x, y
 
 class PositionEncoding(nn.Module):
