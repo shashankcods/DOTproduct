@@ -180,6 +180,11 @@ class DecoderOnlyTranformer(L.LightningModule):
         self.we = nn.Embedding(num_embeddings = num_tokens, embedding_dim = d_model)
         self.pe = PositionEncoding(d_model = d_model, max_len = max_len)
 
+        self.register_buffer(
+            "mask",
+            torch.tril(torch.ones(max_len, max_len)).view(1, 1, max_len, max_len)
+        )
+
         num_layers = 6
 
         self.blocks = nn.ModuleList(
@@ -195,9 +200,7 @@ class DecoderOnlyTranformer(L.LightningModule):
         position_encoded = self.pe(word_embeddings)
         
         T = token_ids.size(1)
-        mask = torch.tril(torch.ones((T, T), device=self.device))
-        mask = mask == 0
-        mask = mask.unsqueeze(0).unsqueeze(0)
+        mask = self.mask[:, :, :T, :T] == 0
 
         x = position_encoded
 
