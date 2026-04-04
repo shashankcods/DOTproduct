@@ -215,9 +215,15 @@ def generate(model, prompt, max_new_tokens=200):
 
     model.eval()
 
+    prompt = f"<CONVO_START>\nUser: {prompt}\nAssistant: "
+
     model_input = torch.tensor(tokenizer.encode(prompt).ids).unsqueeze(0).to(device)
 
     generated = []
+
+    user_token_id = tokenizer.encode("User:").ids[0]
+    assistant_token_id = tokenizer.encode("Assistant:").ids[0]
+    start_token_id = tokenizer.encode("<CONVO_START>").ids[0]
 
     with torch.no_grad():
         for _ in range(max_new_tokens):
@@ -226,9 +232,22 @@ def generate(model, prompt, max_new_tokens=200):
 
             predictions = model(model_input)
 
+            logits = predictions[0, -1]
+
+            logits[user_token_id] = -1e9
+            logits[start_token_id] = -1e9
+            logits[assistant_token_id] = -1e9
+
             temperature = 0.8
-            probs = F.softmax(predictions[0, -1] / temperature, dim=-1)
-            next_id = torch.multinomial(probs, num_samples=1)
+            logits = logits / temperature
+
+            top_k = 40
+            values, indices = torch.topk(logits, top_k)
+
+            probs = F.softmax(values, dim=-1)
+
+            next_token = torch.multinomial(probs, 1)
+            next_id = indices[next_token]
 
             model_input = torch.cat(
                 (model_input, next_id.unsqueeze(0)),
@@ -237,8 +256,16 @@ def generate(model, prompt, max_new_tokens=200):
 
             generated.append(next_id.item())
 
+            decoded_so_far = tokenizer.decode(generated)
+            if "<CONVO_END>" in decoded_so_far:
+                break
+
     decoded = tokenizer.decode(generated)
-    return decoded
+
+    if "<CONVO_END>" in decoded:
+        decoded = decoded.split("<CONVO_END>")[0]
+
+    return decoded.strip()
 
 if __name__ == "__main__":
 
