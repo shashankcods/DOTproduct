@@ -211,7 +211,7 @@ class DecoderOnlyTranformer(L.LightningModule):
 
         return fc_layer_output
     
-def generate(model, prompt, max_new_tokens=200):
+def generate(model, prompt, max_new_tokens=60):
 
     model.eval()
 
@@ -224,6 +224,7 @@ def generate(model, prompt, max_new_tokens=200):
     user_token_id = tokenizer.encode("User:").ids[0]
     assistant_token_id = tokenizer.encode("Assistant:").ids[0]
     start_token_id = tokenizer.encode("<CONVO_START>").ids[0]
+    newline_token_id = tokenizer.encode("\n").ids[0]
 
     with torch.no_grad():
         for _ in range(max_new_tokens):
@@ -235,12 +236,18 @@ def generate(model, prompt, max_new_tokens=200):
             logits = predictions[0, -1]
 
             logits[user_token_id] = -1e9
-            logits[start_token_id] = -1e9
             logits[assistant_token_id] = -1e9
+            logits[start_token_id] = -1e9
+            logits[newline_token_id] = -1e9
+
+            repetition_penalty = 1.2
+            for token in set(generated):
+                logits[token] /= repetition_penalty
 
             temperature = 0.8
             logits = logits / temperature
 
+            # top-k sampling
             top_k = 40
             values, indices = torch.topk(logits, top_k)
 
@@ -257,13 +264,18 @@ def generate(model, prompt, max_new_tokens=200):
             generated.append(next_id.item())
 
             decoded_so_far = tokenizer.decode(generated)
+
+            if "\nUser:" in decoded_so_far:  # stop if assistant finished and user turn begins
+                break
+
             if "<CONVO_END>" in decoded_so_far:
                 break
 
     decoded = tokenizer.decode(generated)
 
-    if "<CONVO_END>" in decoded:
-        decoded = decoded.split("<CONVO_END>")[0]
+    decoded = decoded.split("\nUser:")[0]
+    decoded = decoded.split("<CONVO_END>")[0]
+    decoded = decoded.replace("\n", " ")
 
     return decoded.strip()
 
