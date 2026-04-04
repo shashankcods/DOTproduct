@@ -37,7 +37,7 @@ data = np.memmap(
     mode="r"
 )
 
-block_size = 128                                                           
+block_size = 256                                                       
 batch_size = 32
 
 def get_batch():
@@ -185,7 +185,7 @@ class DecoderOnlyTranformer(L.LightningModule):
             torch.tril(torch.ones(max_len, max_len)).view(1, 1, max_len, max_len)
         )
 
-        num_layers = 6
+        num_layers = 8
 
         self.blocks = nn.ModuleList(
             [TransformerBlock(d_model, num_heads=8) for _ in range(num_layers)]
@@ -257,7 +257,7 @@ if __name__ == "__main__":
         weight_decay=0.01
     )
 
-    max_steps = 10000
+    max_steps = 30000
 
     if not os.path.exists("model_weights.pth"):
 

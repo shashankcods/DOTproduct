@@ -3,7 +3,7 @@ from tokenizers import ByteLevelBPETokenizer
 tokenizer = ByteLevelBPETokenizer()
 
 tokenizer.train(
-    files=["data/datasets/conversations.txt"],
+    files=["data/datasets/ECMBconversations.txt"],
     vocab_size=16000,
     min_frequency=2
 )

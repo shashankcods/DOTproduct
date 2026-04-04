@@ -6,7 +6,7 @@ tokenizer = ByteLevelBPETokenizer(
     "tokenizer/merges.txt"
 )
 
-input_file = "data/datasets/conversations.txt"
+input_file = "data/datasets/ECMBconversations.txt"
 output_file = "data/tokens.bin"
 
 chunk_size = 1_000_000  # characters per chunk
