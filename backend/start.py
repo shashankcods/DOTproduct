@@ -215,16 +215,11 @@ def generate(model, prompt, max_new_tokens=60):
 
     model.eval()
 
-    prompt = f"<CONVO_START>\nUser: {prompt}\nAssistant: "
+    prompt = f"<start_convo>\nuser: {prompt}\nmodel: "
 
     model_input = torch.tensor(tokenizer.encode(prompt).ids).unsqueeze(0).to(device)
 
     generated = []
-
-    user_token_id = tokenizer.encode("User:").ids[0]
-    assistant_token_id = tokenizer.encode("Assistant:").ids[0]
-    start_token_id = tokenizer.encode("<CONVO_START>").ids[0]
-    newline_token_id = tokenizer.encode("\n").ids[0]
 
     with torch.no_grad():
         for _ in range(max_new_tokens):
@@ -234,11 +229,6 @@ def generate(model, prompt, max_new_tokens=60):
             predictions = model(model_input)
 
             logits = predictions[0, -1]
-
-            logits[user_token_id] = -1e9
-            logits[assistant_token_id] = -1e9
-            logits[start_token_id] = -1e9
-            logits[newline_token_id] = -1e9
 
             repetition_penalty = 1.2
             for token in set(generated):
@@ -265,16 +255,16 @@ def generate(model, prompt, max_new_tokens=60):
 
             decoded_so_far = tokenizer.decode(generated)
 
-            if "\nUser:" in decoded_so_far:  # stop if assistant finished and user turn begins
+            if "\nuser:" in decoded_so_far:
                 break
 
-            if "<CONVO_END>" in decoded_so_far:
+            if "<end_convo>" in decoded_so_far:
                 break
 
     decoded = tokenizer.decode(generated)
 
-    decoded = decoded.split("\nUser:")[0]
-    decoded = decoded.split("<CONVO_END>")[0]
+    decoded = decoded.split("\nuser:")[0]
+    decoded = decoded.split("<end_convo>")[0]
     decoded = decoded.replace("\n", " ")
 
     return decoded.strip()
@@ -292,7 +282,7 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=3e-4,
+        lr=2e-4,
         weight_decay=0.01
     )
 

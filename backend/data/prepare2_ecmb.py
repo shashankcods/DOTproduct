@@ -116,12 +116,12 @@ def main():
 
     with open(output_path, "w", encoding="utf-8") as f:
         for sample in training_samples:
-            f.write("<START_CONVO>\n")
+            f.write("<start_convo>\n")
 
             for role, text in sample:
                 f.write(f"{role}: {text}\n")
 
-            f.write("<END_CONVO>\n\n")
+            f.write("<end_convo>\n\n")
 
 
 if __name__ == "__main__":
