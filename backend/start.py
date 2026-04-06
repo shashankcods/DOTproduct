@@ -260,6 +260,7 @@ def generate(model, prompt, max_new_tokens=60):
 
             if "<end_convo>" in decoded_so_far:
                 break
+            
 
     decoded = tokenizer.decode(generated)
 
@@ -286,7 +287,7 @@ if __name__ == "__main__":
         weight_decay=0.01
     )
 
-    max_steps = 30000
+    max_steps = 60000
 
     if not os.path.exists("model_weights.pth"):
 
