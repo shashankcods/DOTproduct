@@ -185,7 +185,7 @@ class DecoderOnlyTranformer(L.LightningModule):
             torch.tril(torch.ones(max_len, max_len)).view(1, 1, max_len, max_len)
         )
 
-        num_layers = 8
+        num_layers = 10
 
         self.blocks = nn.ModuleList(
             [TransformerBlock(d_model, num_heads=8) for _ in range(num_layers)]
@@ -272,7 +272,7 @@ def generate(model, prompt, max_new_tokens=60):
 
 if __name__ == "__main__":
 
-    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size).to(device) # now runs on GPU
+    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=384, max_len=block_size).to(device) # now runs on GPU
 
     import os
 

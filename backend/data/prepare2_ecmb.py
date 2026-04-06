@@ -17,6 +17,10 @@ def clean_text(text):
     text = text.replace("_question_", "?")
     text = text.replace("_exclamation_", "!")
 
+    text = re.sub(r"(\d+)%", r"\1 percent", text)
+    
+    text = re.sub(r"[^a-z0-9 .,!?'\n:<>_-]", "", text)
+
     text = text.strip()
     text = re.sub(r"\s+", " ", text)
 

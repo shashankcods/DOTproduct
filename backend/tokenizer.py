@@ -5,7 +5,13 @@ tokenizer = ByteLevelBPETokenizer()
 tokenizer.train(
     files=["data/datasets/ECMBconversations2.txt"],
     vocab_size=16000,
-    min_frequency=2
+    min_frequency=2,
+    special_tokens=[
+        "<start_convo>",
+        "<end_convo>",
+        "user:",
+        "model:"
+    ]
 )
 
 tokenizer.save_model("tokenizer")
