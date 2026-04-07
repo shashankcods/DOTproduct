@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F # for softmax() and argmax()
 from torch.optim import AdamW 
 from torch.utils.data import TensorDataset, DataLoader 
+import re
 
 from tokenizers import ByteLevelBPETokenizer
 
@@ -14,9 +15,6 @@ print(torch.cuda.get_device_name(0))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", str(device).upper())
 
-with open("datasets/tiny_shakespeare.txt", "r", encoding="utf-8") as f:
-    text = f.read()
-
 # chars = sorted(list(set(text)))
 # vocab_size = len(chars)
 
@@ -25,6 +23,8 @@ with open("datasets/tiny_shakespeare.txt", "r", encoding="utf-8") as f:
 
 # data = torch.tensor([token_to_id[c] for c in text], dtype=torch.long) 
 
+import numpy as np
+
 tokenizer = ByteLevelBPETokenizer(
     "tokenizer/vocab.json",
     "tokenizer/merges.txt"
@@ -32,19 +32,29 @@ tokenizer = ByteLevelBPETokenizer(
 
 vocab_size = tokenizer.get_vocab_size()
 
-encoded = tokenizer.encode(text)
-data = torch.tensor(encoded.ids, dtype=torch.long)
+data = np.memmap(
+    "data/tokens.bin",
+    dtype=np.uint16,
+    mode="r"
+)
 
-block_size = 128                                                           
+block_size = 256                                                       
 batch_size = 32
 
 def get_batch():
-    
-    ix = torch.randint(len(data) - block_size, (batch_size,)) # batch_size is the num of sequences being provided per get_batch
-    
-    x = torch.stack([data[i:i+block_size] for i in ix])     # creating a stack of "batch_size" sequences to send as X
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix]) # shifting the above one pos ahead to send as Y
-    
+
+    ix = torch.randint(len(data) - block_size - 1, (batch_size,))
+
+    x = torch.stack([
+        torch.from_numpy(data[i:i+block_size].astype(np.int64))
+        for i in ix
+    ])
+
+    y = torch.stack([
+        torch.from_numpy(data[i+1:i+block_size+1].astype(np.int64))
+        for i in ix
+    ])
+
     return x, y
 
 class PositionEncoding(nn.Module):
@@ -171,7 +181,12 @@ class DecoderOnlyTranformer(L.LightningModule):
         self.we = nn.Embedding(num_embeddings = num_tokens, embedding_dim = d_model)
         self.pe = PositionEncoding(d_model = d_model, max_len = max_len)
 
-        num_layers = 6
+        self.register_buffer(
+            "mask",
+            torch.tril(torch.ones(max_len, max_len)).view(1, 1, max_len, max_len)
+        )
+
+        num_layers = 10
 
         self.blocks = nn.ModuleList(
             [TransformerBlock(d_model, num_heads=8) for _ in range(num_layers)]
@@ -186,9 +201,7 @@ class DecoderOnlyTranformer(L.LightningModule):
         position_encoded = self.pe(word_embeddings)
         
         T = token_ids.size(1)
-        mask = torch.tril(torch.ones((T, T), device=self.device))
-        mask = mask == 0
-        mask = mask.unsqueeze(0).unsqueeze(0)
+        mask = self.mask[:, :, :T, :T] == 0
 
         x = position_encoded
 
@@ -199,67 +212,154 @@ class DecoderOnlyTranformer(L.LightningModule):
 
         return fc_layer_output
     
-def generate(model, prompt, max_new_tokens=200):
+def generate(model, prompt, max_new_tokens=80):
+
+    min_tokens = 8
 
     model.eval()
+
+    prompt = f"<start_convo>\nuser: {prompt}\nmodel: "
 
     model_input = torch.tensor(tokenizer.encode(prompt).ids).unsqueeze(0).to(device)
 
     generated = []
 
-    for _ in range(max_new_tokens):
+    with torch.no_grad():
+        for _ in range(max_new_tokens):
 
-        model_input = model_input[:, -block_size:]
+            model_input = model_input[:, -block_size:]
 
-        predictions = model(model_input)
+            predictions = model(model_input)
 
-        probs = F.softmax(predictions[0, -1], dim=-1)
-        next_id = torch.multinomial(probs, num_samples=1)
+            logits = predictions[0, -1]
 
-        model_input = torch.cat(
-            (model_input, next_id.unsqueeze(0)),
-            dim=1
-        )
+            repetition_penalty = 1.25
+            recent_tokens = generated[-40:]
 
-        generated.append(next_id.item())
+            for token in set(recent_tokens):
+                logits[token] /= repetition_penalty
+
+            temperature = 1.05
+            logits = logits / temperature
+
+            bad_tokens = [
+                "ell", "ella", "elling", "ello", "ells", "elly",
+                "ellas", "ellite",
+                "ounced", "onounced", "ounce",
+                "!!!", "!!!!", "!!!!!", "!!!!!!!!", "!!!???", "!!",
+                " john", "johnson", "johnny"
+            ]
+
+            for tok in bad_tokens:
+                ids = tokenizer.encode(tok).ids
+                for i in ids:
+                    logits[i] = -1e9
+
+            probs = F.softmax(logits, dim=-1)
+
+            top_k = 40
+            values, indices = torch.topk(probs, top_k)
+
+            sorted_probs, sorted_indices = torch.sort(values, descending=True)
+            cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+            top_p = 0.9
+            cutoff = cumulative_probs > top_p
+            cutoff[..., 1:] = cutoff[..., :-1].clone()
+            cutoff[..., 0] = False
+
+            sorted_probs[cutoff] = 0
+            sorted_probs = sorted_probs / sorted_probs.sum()
+
+            next_token = torch.multinomial(sorted_probs, 1)
+            next_id = indices[sorted_indices[next_token]]
+
+            model_input = torch.cat(
+                (model_input, next_id.unsqueeze(0)),
+                dim=1
+            )
+
+            generated.append(next_id.item())
+
+            decoded_so_far = tokenizer.decode(generated)
+
+            if "\nuser:" in decoded_so_far and len(generated) > min_tokens:
+                break
+
+            if "<end_convo>" in decoded_so_far and len(generated) > min_tokens:
+                break
+            
 
     decoded = tokenizer.decode(generated)
-    return prompt + decoded
+
+    decoded = decoded.split("\nuser:")[0]
+    decoded = decoded.split("<end_convo>")[0]
+
+    decoded = decoded.replace("\n", " ")
+
+    # remove punctuation at the beginning like ".", "!", "?."
+    decoded = re.sub(r'^[\.\!\?\s]+', '', decoded)
+
+    # fix mixed punctuation like "!. "
+    decoded = re.sub(r'[!]+\.', '.', decoded)
+    decoded = re.sub(r'\.[!]+', '.', decoded)
+
+    decoded = decoded.strip()
+
+    return decoded
 
 if __name__ == "__main__":
 
-    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=256, max_len=block_size).to(device) # now runs on GPU
+    model = DecoderOnlyTranformer(num_tokens=vocab_size, d_model=384, max_len=block_size).to(device) # now runs on GPU
+
+    import os
+
+    if os.path.exists("model_weights.pth"):
+        model.load_state_dict(torch.load("model_weights.pth", map_location=device))
+        model.eval()
+        print("Loaded saved model.")
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=3e-4,
+        lr=2e-4,
         weight_decay=0.01
     )
 
-    max_steps = 10000
+    max_steps = 70000
 
-    for step in range(max_steps):
+    if not os.path.exists("model_weights.pth"):
 
-        x, y = get_batch()
+        for step in range(max_steps):
 
-        x = x.to(device) # training data also in GPU
-        y = y.to(device)
+            x, y = get_batch()
 
-        logits = model(x)
+            x = x.to(device)
+            y = y.to(device)
 
-        loss = model.loss(
-            logits.view(-1, logits.size(-1)),  # (32, 32, 65) becomes (1024, 65)
-            y.view(-1)
-        )
+            logits = model(x)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            loss = model.loss(
+                logits.view(-1, logits.size(-1)),
+                y.view(-1)
+            )
 
-        if step % 200 == 0:
-            print("step:", step, "loss:", loss.item())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-    prompt = "ROMEO:"
-    output = generate(model, prompt)
+            if step % 200 == 0:
+                print("step:", step, "loss:", loss.item())
 
-    print(output)
+        torch.save(model.state_dict(), "model_weights.pth")
+        print("Model saved.")
+
+    while True:
+
+        prompt = input("\nYou: ")
+
+        if prompt.lower() in ["exit", "quit"]:
+            break
+
+        output = generate(model, prompt)
+
+        print("Model:", output)

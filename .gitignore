@@ -42,3 +42,5 @@ DOTvenv/
 # python cache
 __pycache__/
 *.pyc
+
+*.bin
