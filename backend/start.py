@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F # for softmax() and argmax()
 from torch.optim import AdamW 
 from torch.utils.data import TensorDataset, DataLoader 
+import re
 
 from tokenizers import ByteLevelBPETokenizer
 
@@ -211,7 +212,9 @@ class DecoderOnlyTranformer(L.LightningModule):
 
         return fc_layer_output
     
-def generate(model, prompt, max_new_tokens=60):
+def generate(model, prompt, max_new_tokens=80):
+
+    min_tokens = 8
 
     model.eval()
 
@@ -230,21 +233,46 @@ def generate(model, prompt, max_new_tokens=60):
 
             logits = predictions[0, -1]
 
-            repetition_penalty = 1.2
-            for token in set(generated):
+            repetition_penalty = 1.25
+            recent_tokens = generated[-40:]
+
+            for token in set(recent_tokens):
                 logits[token] /= repetition_penalty
 
-            temperature = 0.8
+            temperature = 1.05
             logits = logits / temperature
 
-            # top-k sampling
+            bad_tokens = [
+                "ell", "ella", "elling", "ello", "ells", "elly",
+                "ellas", "ellite",
+                "ounced", "onounced", "ounce",
+                "!!!", "!!!!", "!!!!!", "!!!!!!!!", "!!!???", "!!",
+                " john", "johnson", "johnny"
+            ]
+
+            for tok in bad_tokens:
+                ids = tokenizer.encode(tok).ids
+                for i in ids:
+                    logits[i] = -1e9
+
+            probs = F.softmax(logits, dim=-1)
+
             top_k = 40
-            values, indices = torch.topk(logits, top_k)
+            values, indices = torch.topk(probs, top_k)
 
-            probs = F.softmax(values, dim=-1)
+            sorted_probs, sorted_indices = torch.sort(values, descending=True)
+            cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-            next_token = torch.multinomial(probs, 1)
-            next_id = indices[next_token]
+            top_p = 0.9
+            cutoff = cumulative_probs > top_p
+            cutoff[..., 1:] = cutoff[..., :-1].clone()
+            cutoff[..., 0] = False
+
+            sorted_probs[cutoff] = 0
+            sorted_probs = sorted_probs / sorted_probs.sum()
+
+            next_token = torch.multinomial(sorted_probs, 1)
+            next_id = indices[sorted_indices[next_token]]
 
             model_input = torch.cat(
                 (model_input, next_id.unsqueeze(0)),
@@ -255,10 +283,10 @@ def generate(model, prompt, max_new_tokens=60):
 
             decoded_so_far = tokenizer.decode(generated)
 
-            if "\nuser:" in decoded_so_far:
+            if "\nuser:" in decoded_so_far and len(generated) > min_tokens:
                 break
 
-            if "<end_convo>" in decoded_so_far:
+            if "<end_convo>" in decoded_so_far and len(generated) > min_tokens:
                 break
             
 
@@ -266,9 +294,19 @@ def generate(model, prompt, max_new_tokens=60):
 
     decoded = decoded.split("\nuser:")[0]
     decoded = decoded.split("<end_convo>")[0]
+
     decoded = decoded.replace("\n", " ")
 
-    return decoded.strip()
+    # remove punctuation at the beginning like ".", "!", "?."
+    decoded = re.sub(r'^[\.\!\?\s]+', '', decoded)
+
+    # fix mixed punctuation like "!. "
+    decoded = re.sub(r'[!]+\.', '.', decoded)
+    decoded = re.sub(r'\.[!]+', '.', decoded)
+
+    decoded = decoded.strip()
+
+    return decoded
 
 if __name__ == "__main__":
 
@@ -287,7 +325,7 @@ if __name__ == "__main__":
         weight_decay=0.01
     )
 
-    max_steps = 60000
+    max_steps = 70000
 
     if not os.path.exists("model_weights.pth"):
 
