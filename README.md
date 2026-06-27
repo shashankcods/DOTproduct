@@ -1,4 +1,4 @@
-# DOT Product
+# D.O.T Product
 
 A locally trained **decoder-only Transformer language model** built using PyTorch. The model is designed to generate conversational responses by learning from tokenized dialogue data. This project implements the core components of modern language models from scratch, including tokenization, attention mechanisms, transformer blocks, training pipelines, and probabilistic text generation.
 
