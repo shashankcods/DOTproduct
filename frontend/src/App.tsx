@@ -43,7 +43,7 @@ function ChatApp() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/generate", {
+      const response = await fetch("http://localhost:8001/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -64,6 +64,7 @@ function ChatApp() {
 
       setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
+      console.error("Chat request failed:", error);
       setMessages((prev) => [
         ...prev,
         {

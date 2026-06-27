@@ -6,8 +6,6 @@ import re
 
 from tokenizers import ByteLevelBPETokenizer
 
-import lightning as L 
-
 print("CUDA available:", torch.cuda.is_available())
 
 if torch.cuda.is_available():
@@ -174,12 +172,16 @@ class TransformerBlock(nn.Module):
 
         return x
 
-class DecoderOnlyTranformer(L.LightningModule):
+class DecoderOnlyTranformer(nn.Module):
     
     def __init__(self, num_tokens, d_model, max_len):
         super().__init__()
 
-        L.seed_everything(seed = 42)
+        torch.manual_seed(42)
+
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(42)
+            torch.cuda.manual_seed_all(42)
 
         self.we = nn.Embedding(num_embeddings = num_tokens, embedding_dim = d_model)
         self.pe = PositionEncoding(d_model = d_model, max_len = max_len)
