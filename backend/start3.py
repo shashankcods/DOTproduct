@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn 
 import torch.nn.functional as F # for softmax() and argmax()
 from torch.optim import AdamW 
+from torch.utils.data import TensorDataset, DataLoader 
 import re
 
 from tokenizers import ByteLevelBPETokenizer
@@ -322,7 +323,7 @@ if __name__ == "__main__":
         model.eval()
         print("Loaded saved model.")
 
-    optimizer = AdamW(
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=2e-4,
         weight_decay=0.01
